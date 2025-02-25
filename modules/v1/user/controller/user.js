@@ -200,6 +200,13 @@ class User {
             common.response(res, response_data);
         });
     }
+    rate_post(req,res){
+        const request_data = req.body;
+        
+        userModel.rate_post(request_data, request_data.user_id, (response_data) => {
+            common.response(res, response_data);
+        });
+    }
     delete_posts(req,res){
         const request_data = req.body;
         

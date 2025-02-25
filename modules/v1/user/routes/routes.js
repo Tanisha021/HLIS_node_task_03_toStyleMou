@@ -1,6 +1,7 @@
 const User = require('../controller/user');  
 
 const customerRoute = (app) => {
+    //authentication
     app.post("/v1/user/signup", User.signup); 
     app.post("/v1/user/login", User.login);
     app.post("/v1/user/generate-otp", User.verifyOTP);
@@ -11,6 +12,7 @@ const customerRoute = (app) => {
     app.post("/v1/user/reset-password", User.resetPassword);
     app.post("/v1/user/change-password", User.changePassword);
 
+    //figma api
     app.get("/v1/user/display-trending-post", User.displayTrendingPost);
     app.get("/v1/user/category/:category_name", User.CategoryWiseDisplay);
     app.get("/v1/user/postranking/:post_id", User.postRankings);
@@ -18,6 +20,7 @@ const customerRoute = (app) => {
     app.get("/v1/user/savedpost", User.savedPost);
     app.get("/v1/user/:user_id", User.profileOfUser);
 
+    //user
     app.post("/v1/user/filter", User.filter);
     app.post("/v1/user/other-profile", User.otherProfile);
     app.post("/v1/user/create-post", User.create_post);
@@ -26,6 +29,7 @@ const customerRoute = (app) => {
     app.post("/v1/user/add-comment", User.add_comment);
     app.post("/v1/user/delete-posts", User.delete_posts);
     app.post("/v1/user/edit-profile", User.edit_profile);
+    app.post("/v1/user/rate-post", User.rate_post);
 
     
 };

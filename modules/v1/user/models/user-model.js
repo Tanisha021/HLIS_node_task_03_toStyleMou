@@ -988,7 +988,7 @@ class UserModel {
                 message: "Database error occurred: " + (error.sqlMessage || error.message)
             });
     }
-    }
+    } 
     
     async otherProfile(requestData, callback) {
         try {
@@ -1301,6 +1301,83 @@ class UserModel {
         }
     }
 
+    async rate_post(request_data, user_id, callback) {
+        try {
+            const { post_id, rating, sub_post_id } = request_data;
+    
+            if (!post_id ||!user_id|| !rating || rating < 1 || rating > 5) {
+                return callback({
+                    code: response_code.BAD_REQUEST,
+                    message: "Invalid post_id or rating (must be between 1-5)",
+                });
+            }
+    
+            const fetchPostTypeQuery = "SELECT post_type FROM tbl_post WHERE post_id = ?";
+            const [post] = await database.query(fetchPostTypeQuery, [post_id]);
+    
+            if (post.length === 0) {
+                return callback({
+                    code: response_code.NOT_FOUND,
+                    message: "Post not found",
+                });
+            }
+    
+            const post_type = post[0].post_type;
+    
+            if (post_type === "toStyleCompare") {
+                if (!sub_post_id) {
+                    return callback({
+                        code: response_code.BAD_REQUEST,
+                        message: "sub_post_id is required for toStyleCompare",
+                    });
+                }
+    
+                const checkSubpostQuery = "SELECT * FROM tbl_sub_post WHERE sub_post_id = ?";
+                const [subpost] = await database.query(checkSubpostQuery, [sub_post_id]);
+    
+                if (subpost.length === 0) {
+                    return callback({
+                        code: response_code.NOT_FOUND,
+                        message: "Subpost not found",
+                    });
+                }
+                const checkRatingQuery = "SELECT * FROM tbl_sub_post_rating WHERE sub_post_id = ? AND user_id = ?";
+                const [existingRating] = await database.query(checkRatingQuery, [sub_post_id, user_id]);
+    
+                if (existingRating.length > 0) {
+                
+                    const updateQuery = "UPDATE tbl_sub_post_rating SET rating = ?, updated_at = NOW() WHERE sub_post_id = ? AND user_id = ?";
+                    await database.query(updateQuery, [rating, sub_post_id, user_id]);
+                } else {
+                    const insertQuery = "INSERT INTO tbl_sub_post_rating (sub_post_id, user_id, rating) VALUES (?, ?, ?)";
+                    await database.query(insertQuery, [sub_post_id, user_id, rating]);
+                }
+    
+            } else {
+                const checkRatingQuery = "SELECT * FROM tbl_rating WHERE post_id = ? AND user_id = ?";
+                const [existingRating] = await database.query(checkRatingQuery, [post_id, user_id]);
+    
+                if (existingRating.length > 0) {
+                    const updateQuery = "UPDATE tbl_rating SET rating = ?, updated_at = NOW() WHERE post_id = ? AND user_id = ?";
+                    await database.query(updateQuery, [rating, post_id, user_id]);
+                } else {
+                    const insertQuery = "INSERT INTO tbl_rating (post_id, user_id, rating) VALUES (?, ?, ?)";
+                    await database.query(insertQuery, [post_id, user_id, rating]);
+                }
+            }
+    
+            return callback({
+                code: response_code.SUCCESS,
+                message: `Rating added successfully for ${post_type}`,
+            });
+    
+        } catch (error) {
+            return callback({
+                code: response_code.OPERATION_FAILED,
+                message: error.sqlMessage || "Error adding rating",
+            });
+        }
+    }
 }
 module.exports = new UserModel();
 // async signup(request_data, callback) {
