@@ -146,6 +146,12 @@ class User {
             common.response(res, _responseData);
         });
     }
+    async filter(req,res){
+        var request_data = req.body;
+        userModel.filter(request_data, (_response_data)=>{
+            common.response(res, _response_data);
+        });
+    }
     profileOfUser(req, res) {
         var request_data = req.params;
 
@@ -163,6 +169,41 @@ class User {
            });
         }
         userModel.create_post(request_data, request_data.user_id, (response_data) => {
+            common.response(res, response_data);
+        });
+    }
+    follow_user(req,res){
+        const request_data = req.body;
+        
+        userModel.follow_user(request_data, request_data.user_id, (response_data) => {
+            common.response(res, response_data);
+        });
+    }
+    save_post(req,res){
+        const request_data = req.body;
+        
+        userModel.save_post(request_data, request_data.user_id, (response_data) => {
+            common.response(res, response_data);
+        });
+    }
+    add_comment(req,res){
+        const request_data = req.body;
+        
+        userModel.add_comment(request_data, request_data.user_id, (response_data) => {
+            common.response(res, response_data);
+        });
+    }
+    edit_profile(req,res){
+        const request_data = req.body;
+        
+        userModel.edit_profile(request_data, request_data.user_id, (response_data) => {
+            common.response(res, response_data);
+        });
+    }
+    delete_posts(req,res){
+        const request_data = req.body;
+        
+        userModel.delete_posts(request_data, (response_data) => {
             common.response(res, response_data);
         });
     }

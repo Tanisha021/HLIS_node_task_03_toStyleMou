@@ -12,19 +12,28 @@ const customerRoute = (app) => {
     app.post("/v1/user/change-password", User.changePassword);
 
     app.get("/v1/user/display-trending-post", User.displayTrendingPost);
-    app.get("/v1/user/filtered/new", User.filterNew);
-    app.get("/v1/user/filtered/following", User.filterFollowing);
-    app.get("/v1/user/filtered/new/tostylecompare", User.filterNewToStyleCompare);
-    app.get("/v1/user/filter/expire/tostylecompare", User.filterExpiringToStyleCompare);
     app.get("/v1/user/category/:category_name", User.CategoryWiseDisplay);
     app.get("/v1/user/postranking/:post_id", User.postRankings);
     app.get("/v1/user/postDetails/:post_id", User.postDetails);
     app.get("/v1/user/savedpost", User.savedPost);
     app.get("/v1/user/:user_id", User.profileOfUser);
-    app.get("/v1/user/other-profile", User.otherProfile);
 
+    app.post("/v1/user/filter", User.filter);
+    app.post("/v1/user/other-profile", User.otherProfile);
     app.post("/v1/user/create-post", User.create_post);
+    app.post("/v1/user/follow-user", User.follow_user);
+    app.post("/v1/user/save-post", User.save_post);
+    app.post("/v1/user/add-comment", User.add_comment);
+    app.post("/v1/user/delete-posts", User.delete_posts);
+    app.post("/v1/user/edit-profile", User.edit_profile);
+
     
 };
 
 module.exports = customerRoute;
+// app.get("/v1/user/filtered/new", User.filterNew);
+// app.get("/v1/user/filtered/following", User.filterFollowing);
+// app.get("/v1/user/filtered/new/tostylecompare", User.filterNewToStyleCompare);
+// app.get("/v1/user/filter/expire/tostylecompare", User.filterExpiringToStyleCompare);
+
+

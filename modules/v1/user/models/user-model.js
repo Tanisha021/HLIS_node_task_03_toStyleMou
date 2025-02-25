@@ -5,52 +5,62 @@ const md5 = require("md5");
 
 class UserModel {
     
-async signup(request_data, callback) {
-        if(request_data){
-              // Prepare user data object
-        const userData = {
-            user_name: request_data.user_name,
-            email_id: request_data.email_id || null,
-            mobile_number: request_data.mobile_number || null,
-            passwords: request_data.passwords ? md5(request_data.passwords) : null,
-            steps_: 1
-        };
-        // Insert new user if no existing record found
-        try {
-            const insertUserQuery = "INSERT INTO tbl_user SET ?";
+    async signup(request_data, callback) {
+            // Insert new user if no existing record found
+            try {
+                if (!request_data.email_id || !request_data.user_name || !request_data.mobile_number || !request_data.passwords) {
+                    return callback({
+                        code: response_code.OPERATION_FAILED,
+                        message: "Missing required fields"
+                    });
+                }
+                     // Prepare user data object
+                    const userData = {
+                        user_name: request_data.user_name,
+                        email_id: request_data.email_id || null,
+                        mobile_number: request_data.mobile_number || null,
+                        passwords: request_data.passwords ? md5(request_data.passwords) : null,
+                        steps_: 1
+                    };
 
-            // Insert user into the database
-            const [result] = await database.query(insertUserQuery, userData);
-            console.log(result.insertId)
-            if (!result.insertId) {
-                return callback({
-                    code: response_code.OPERATION_FAILED,
-                    message: "User registration failed"
-                }, null);
-            } else {
+                const insertUserQuery = "INSERT INTO tbl_user SET ?";
+
+                // Insert user into the database
+                const [result] = await database.query(insertUserQuery, userData);
+                console.log(result.insertId)
+                if (!result.insertId) {
+                    return callback({
+                        code: response_code.OPERATION_FAILED,
+                        message: "User registration failed"
+                    }, null);
+                } 
+                const timeZoneTimestamp = new Date(request_data.time_zone).toISOString().slice(0, 19).replace('T', ' ');
+                const deviceData = {
+                    user_id: result.insertId,
+                    device_type: request_data.device_type,
+                    device_token: request_data.device_token,
+                    os_version: request_data.os_version,
+                    app_version: request_data.app_version,
+                    time_zone: timeZoneTimestamp
+                };
+                
+                const insertDeviceQuery = "INSERT INTO tbl_device_info SET ?";
+                await database.query(insertDeviceQuery, deviceData);
+
                 callback({
                     code: response_code.SUCCESS,
                     message: "User registered, please verify OTP",
                     user_id: result.insertId
                 });
+
+            } catch (error) {
+                console.error("Signup error:", error); // Log the actual error
+                callback({
+                    code: response_code.OPERATION_FAILED,
+                    message: "Signup error: " + error.message  // Include error message
+                }, null);
             }
-
-        } catch (error) {
-            console.error("Signup error:", error); // Log the actual error
-            callback({
-                code: response_code.OPERATION_FAILED,
-                message: "Signup error: " + error.message  // Include error message
-            }, null);
-        }
-    }else{
-        return callback({
-            code: response_code.OPERATION_FAILED,
-            message: "Invalid request data"
-        }, null);
     }
-      
-
-}
 
     // verify OTP
     async verifyOTP(request_data, callback) {
@@ -394,10 +404,43 @@ async signup(request_data, callback) {
 
     async displayTrendingPost(request_data, callback) {
         try{
-            const selectQuery =`select p.post_id, i.image_name from tbl_post p inner join tbl_post_image_relation pi
-                                    on pi.post_id = p.post_id 
+            const updateTrendingQuery = `
+                UPDATE tbl_post p
+                JOIN (
+                    SELECT post_id
+                    FROM (
+                        SELECT post_id, COUNT(rating_id) AS total_ratings, AVG(rating) AS avg_rating
+                        FROM tbl_rating
+                        GROUP BY post_id
+                        ORDER BY total_ratings DESC, avg_rating DESC
+                        LIMIT 3
+                    ) AS trending_post
+                ) tp ON p.post_id = tp.post_id
+                SET p.is_trending = 1
+                WHERE is_active = 1 AND is_deleted = 0
+            `;
+    
+            await database.query(updateTrendingQuery);
+            const resetTrendingQuery = `
+                UPDATE tbl_post 
+                SET is_trending = 0 
+                WHERE post_id NOT IN (
+                    SELECT post_id FROM (
+                        SELECT post_id
+                        FROM tbl_rating
+                        GROUP BY post_id
+                        ORDER BY COUNT(rating_id) DESC, AVG(rating) DESC
+                        LIMIT 3
+                    ) AS trending
+                )
+            `;
+
+            await database.query(resetTrendingQuery);
+
+            const selectQuery =`select p.post_id, i.image_name from tbl_post p 
+                                    inner join tbl_post_image_relation pi on pi.post_id = p.post_id 
                                     inner join tbl_image i on i.image_id = pi.image_id
-                                    where p.is_trending = 1;`
+                                    where p.is_trending = 1 AND p.is_active = 1 AND p.is_deleted = 0;`
             const [result] = await database.query(selectQuery);
             if(result.length > 0){
                 return callback({
@@ -423,140 +466,311 @@ async signup(request_data, callback) {
     }
 
 }   
-    // filter new
-    async filterNew(request_data, callback) {
-        try{
-            const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p 
-                                    left join tbl_post_image_relation pi on pi.post_id = p.post_id
-                                    left join tbl_image i on i.image_id = pi.image_id
-                                    where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
-                                    order by p.created_at limit 3;`
-            const [result] = await database.query(selectQuery);
-            if(result.length > 0){
+    //filter
+    async filter(request_data, callback){
+        const {filter_type, post_type} = request_data;
+        if(filter_type === "new"){
+            var query;
+            var queryParams = [];
+
+            if(post_type === "toStyleAll"){
+                query = `select
+                        p.post_id,
+                        i.image_name,
+                        p.post_type
+                        from tbl_post p
+                        left join
+                        tbl_post_image_relation pi
+                        on pi.post_id = p.post_id
+                        left join
+                        tbl_image i
+                        on i.image_id = pi.image_id
+                        where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+                        order by p.created_at limit 6;`;
+            } else{
+                query = `select
+                        p.post_id,
+                        i.image_name,
+                        p.post_type
+                        from tbl_post p
+                        left join
+                        tbl_post_image_relation pi
+                        on pi.post_id = p.post_id
+                        left join
+                        tbl_image i
+                        on i.image_id = pi.image_id
+                        where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+                        and p.post_type = ?
+                        order by p.created_at limit 3;`;
+                        queryParams.push(post_type);
+            }
+
+            const [results] = await database.query(query, queryParams);
+            if(results.length === 0){
                 return callback({
-                    code: response_code.SUCCESS,
-                    message: "post based on filter new",
-                    data: result
+                    code: response_code.NOT_FOUND,
+                    message: "NOT FOUND"
                 });
-                                
-        }else {
+            }
             return callback({
-                code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
-                message: "no New post found",
-                data: []
+                code: response_code.SUCCESS,
+                message: "Here are posts...",
+                data: results
+            });
+
+        } else if(filter_type === "following"){
+            var query;
+            var queryParams = [];
+
+            if(post_type === "toStyleAll"){
+                query = `select
+                        p.post_id,
+                        i.image_name,
+                        p.post_type
+                        from tbl_post p
+                        left join
+                        tbl_post_image_relation pi
+                        on pi.post_id = p.post_id
+                        left join
+                        tbl_image i
+                        on i.image_id = pi.image_id
+                        where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+                        and
+                        p.user_id in (
+                            select f.follow_id from tbl_follow f where f.user_id = 1
+                        )
+                        order by p.created_at limit 3;`;
+            } else{
+                query = `select
+                        p.post_id,
+                        i.image_name,
+                        p.post_type
+                        from tbl_post p
+                        left join
+                        tbl_post_image_relation pi
+                        on pi.post_id = p.post_id
+                        left join
+                        tbl_image i
+                        on i.image_id = pi.image_id
+                        where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+                        and
+                        p.user_id in (
+                            select f.follow_id from tbl_follow f where f.user_id = 1
+                        )
+                        and post_type = ?
+                        order by p.created_at limit 3;
+                        `;
+                        queryParams.push(post_type);
+            }
+
+            const [results] = await database.query(query, queryParams);
+            if(results.length === 0){
+                return callback({
+                    code: response_code.NOT_FOUND,
+                    message: "NOT FOUND"
+                });
+            }
+            return callback({
+                code: response_code.SUCCESS,
+                message: "Here are posts...",
+                data: results
+            });
+
+        } else if(filter_type === "expiring"){
+            var query;
+            var queryParams = [];
+
+            if(post_type === "toStyleAll"){
+                query = `select
+                        p.post_id,
+                        i.image_name,
+                        p.post_type
+                        from tbl_post p
+                        left join
+                        tbl_post_image_relation pi
+                        on pi.post_id = p.post_id
+                        left join
+                        tbl_image i
+                        on i.image_id = pi.image_id
+                        where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+                        and
+                        expire_timer BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 1 YEAR)`;
+
+            } else{
+                query = `select
+                        p.post_id,
+                        i.image_name,
+                        p.post_type
+                        from tbl_post p
+                        left join
+                        tbl_post_image_relation pi
+                        on pi.post_id = p.post_id
+                        left join
+                        tbl_image i
+                        on i.image_id = pi.image_id
+                        where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+                        and
+                        expire_timer BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 1 YEAR)
+                        and post_type = ?;
+                        `;
+                        queryParams.push(post_type);
+            }
+
+            const [results] = await database.query(query, queryParams);
+            if(results.length === 0){
+                return callback({
+                    code: response_code.NOT_FOUND,
+                    message: "NOT FOUND"
+                });
+            }
+            return callback({
+                code: response_code.SUCCESS,
+                message: "Here are posts...",
+                data: results
+            });
+
+        } else{
+            return callback({
+                code: response_code.NOT_FOUND,
+                message: "Some Error"
             });
         }
+    }
 
-    }catch(error){
-        console.error("Database Error:", error);
-        return callback({
-            code: response_code.OPERATION_FAILED,
-            message: "Database error occurred: " + (error.sqlMessage || error.message)
-        });
-    }
-    }
-    // filter/following
-    async filterFollowing(request_data, callback) {
-        try{
-            const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p
-                                    left join tbl_post_image_relation pi on pi.post_id = p.post_id
-                                    left join tbl_image i on i.image_id = pi.image_id
-                                    where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
-                                    and p.user_id in (
-                                        select f.follow_id from tbl_follow f where f.user_id = 1)
-                                    order by p.created_at limit 3;`
-            const [result] = await database.query(selectQuery);
-            if(result.length > 0){
-                return callback({
-                    code: response_code.SUCCESS,
-                    message: "post shown only which are followed by user",
-                    data: result
-                });
+    // // filter new
+    // async filterNew(request_data, callback) {
+    //     try{
+    //         const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p 
+    //                                 left join tbl_post_image_relation pi on pi.post_id = p.post_id
+    //                                 left join tbl_image i on i.image_id = pi.image_id
+    //                                 where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+    //                                 order by p.created_at limit 3;`
+    //         const [result] = await database.query(selectQuery);
+    //         if(result.length > 0){
+    //             return callback({
+    //                 code: response_code.SUCCESS,
+    //                 message: "post based on filter new",
+    //                 data: result
+    //             });
                                 
-        }else {
-            return callback({
-                code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
-                message: "no post found which are followed by user",
-                data: []
-            });
-        }
+    //     }else {
+    //         return callback({
+    //             code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
+    //             message: "no New post found",
+    //             data: []
+    //         });
+    //     }
 
-    }catch(error){
-        console.error("Database Error:", error);
-        return callback({
-            code: response_code.OPERATION_FAILED,
-            message: "Database error occurred: " + (error.sqlMessage || error.message)
-        });
-    }
-    }
-
-    //filter/new/toStypeCompare
-    async filterNewToStyleCompare(request_data, callback) {
-        try{
-            const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p
-                                    left join tbl_post_image_relation pi on pi.post_id = p.post_id
-                                    left join tbl_image i on i.image_id = pi.image_id
-                                    where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0 and p.post_type = "toStyleCompare"
-                                    order by p.created_at limit 3;`
-            const [result] = await database.query(selectQuery);
-            if(result.length > 0){
-                return callback({
-                    code: response_code.SUCCESS,
-                    message: "post shown on filter new/toStyleCompare",
-                    data: result
-                });
+    // }catch(error){
+    //     console.error("Database Error:", error);
+    //     return callback({
+    //         code: response_code.OPERATION_FAILED,
+    //         message: "Database error occurred: " + (error.sqlMessage || error.message)
+    //     });
+    // }
+    // }
+    // // filter/following
+    // async filterFollowing(request_data, callback) {
+    //     try{
+    //         const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p
+    //                                 left join tbl_post_image_relation pi on pi.post_id = p.post_id
+    //                                 left join tbl_image i on i.image_id = pi.image_id
+    //                                 where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+    //                                 and p.user_id in (
+    //                                     select f.follow_id from tbl_follow f where f.user_id = 1)
+    //                                 order by p.created_at limit 3;`
+    //         const [result] = await database.query(selectQuery);
+    //         if(result.length > 0){
+    //             return callback({
+    //                 code: response_code.SUCCESS,
+    //                 message: "post shown only which are followed by user",
+    //                 data: result
+    //             });
                                 
-        }else {
-            return callback({
-                code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
-                message: "no post found ",
-                data: []
-            });
-        }
+    //     }else {
+    //         return callback({
+    //             code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
+    //             message: "no post found which are followed by user",
+    //             data: []
+    //         });
+    //     }
 
-    }catch(error){
-        console.error("Database Error:", error);
-        return callback({
-            code: response_code.OPERATION_FAILED,
-            message: "Database error occurred: " + (error.sqlMessage || error.message)
-        });
-    }
-    }
+    // }catch(error){
+    //     console.error("Database Error:", error);
+    //     return callback({
+    //         code: response_code.OPERATION_FAILED,
+    //         message: "Database error occurred: " + (error.sqlMessage || error.message)
+    //     });
+    // }
+    // }
 
-     //filter/Expiring/toStypeCompare
-    async filterExpiringToStyleCompare(request_data, callback) {
-        try{
-            const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p
-                                        left join tbl_post_image_relation pi on pi.post_id = p.post_id
-                                        left join tbl_image i on i.image_id = pi.image_id
-                                        where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
-                                        and
-                                        expire_timer BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 1 YEAR)
-                                        and post_type = "toStyleCompare";`
-            const [result] = await database.query(selectQuery);
-            if(result.length > 0){
-                return callback({
-                    code: response_code.SUCCESS,
-                    message: " Filter using Expiring when postType select as toStyleCompare",
-                    data: result
-                });
+    // //filter/new/toStypeCompare
+    // async filterNewToStyleCompare(request_data, callback) {
+    //     try{
+    //         const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p
+    //                                 left join tbl_post_image_relation pi on pi.post_id = p.post_id
+    //                                 left join tbl_image i on i.image_id = pi.image_id
+    //                                 where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0 and p.post_type = "toStyleCompare"
+    //                                 order by p.created_at limit 3;`
+    //         const [result] = await database.query(selectQuery);
+    //         if(result.length > 0){
+    //             return callback({
+    //                 code: response_code.SUCCESS,
+    //                 message: "post shown on filter new/toStyleCompare",
+    //                 data: result
+    //             });
                                 
-        }else {
-            return callback({
-                code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
-                message: "no post found ",
-                data: []
-            });
-        }
+    //     }else {
+    //         return callback({
+    //             code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
+    //             message: "no post found ",
+    //             data: []
+    //         });
+    //     }
 
-    }catch(error){
-        console.error("Database Error:", error);
-        return callback({
-            code: response_code.OPERATION_FAILED,
-            message: "Database error occurred: " + (error.sqlMessage || error.message)
-        });
-    }
-    }
+    // }catch(error){
+    //     console.error("Database Error:", error);
+    //     return callback({
+    //         code: response_code.OPERATION_FAILED,
+    //         message: "Database error occurred: " + (error.sqlMessage || error.message)
+    //     });
+    // }
+    // }
+
+    //  //filter/Expiring/toStypeCompare
+    // async filterExpiringToStyleCompare(request_data, callback) {
+    //     try{
+    //         const selectQuery =`select p.post_id, i.image_name, p.post_type from tbl_post p
+    //                                     left join tbl_post_image_relation pi on pi.post_id = p.post_id
+    //                                     left join tbl_image i on i.image_id = pi.image_id
+    //                                     where p.is_active = 1 and p.is_deleted = 0 and i.is_active = 1 and i.is_deleted = 0
+    //                                     and
+    //                                     expire_timer BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 1 YEAR)
+    //                                     and post_type = "toStyleCompare";`
+    //         const [result] = await database.query(selectQuery);
+    //         if(result.length > 0){
+    //             return callback({
+    //                 code: response_code.SUCCESS,
+    //                 message: " Filter using Expiring when postType select as toStyleCompare",
+    //                 data: result
+    //             });
+                                
+    //     }else {
+    //         return callback({
+    //             code: response_code.NO_DATA_FOUND,  // Assuming a code for empty data
+    //             message: "no post found ",
+    //             data: []
+    //         });
+    //     }
+
+    // }catch(error){
+    //     console.error("Database Error:", error);
+    //     return callback({
+    //         code: response_code.OPERATION_FAILED,
+    //         message: "Database error occurred: " + (error.sqlMessage || error.message)
+    //     });
+    // }
+    // }
 
     //display category wise post
     async CategoryWiseDisplay(request_data, callback) {
@@ -885,6 +1099,207 @@ async signup(request_data, callback) {
         }
     } 
 
+    async follow_user(request_data, user_id, callback) {
+        try{
+            const {follow_id} = request_data;
+            if(!follow_id){
+                return callback({
+                    code: response_code.BAD_REQUEST,
+                    message: "Follow ID is required"
+                });
+            }
+
+            const checkFollowQuery ="SELECT * FROM tbl_follow WHERE user_id = ? AND follow_id = ?";
+            const [existingFollow] = await database.query(checkFollowQuery, [user_id, follow_id]);
+            if(existingFollow.length > 0){
+                return callback({
+                    code: response_code.ALREADY_EXISTS,
+                    message: "User is already followed"
+                });
+            }
+            const followQuery = "INSERT INTO tbl_follow (user_id, follow_id) VALUES (?, ?)";
+            const [followResult] = await database.query(followQuery, [user_id, follow_id]);
+            if(followResult.affectedRows > 0){
+                return callback({
+                    code: response_code.SUCCESS,
+                    message: "User followed successfully"
+                });
+        }
+    }catch (error) {
+        return callback({
+            code: response_code.OPERATION_FAILED,
+            message: "Error occurred while following user",
+            data: error.message || error,
+        });
+    }
+    }
+
+    async save_post(request_data, user_id, callback) {
+        try{
+            const {post_id} = request_data;
+            
+            const checkSaveQuery = "SELECT * FROM tbl_save WHERE user_id = ? AND post_id = ?";
+            const [existingSave] = await database.query(checkSaveQuery, [user_id, post_id]);
+
+            if(existingSave.length > 0){
+                const deleteQuery = "DELETE FROM tbl_save WHERE user_id = ? AND post_id = ?";
+                await database.query(deleteQuery, [user_id, post_id]);
+                return callback({
+                    code: response_code.SUCCESS,
+                    message: "Post unsaved successfully"
+                });
+            }else{
+                const saveQuery = "INSERT INTO tbl_save (user_id, post_id) VALUES (?, ?)";
+                const [saveResult] = await database.query(saveQuery, [user_id, post_id]);
+                if(saveResult.affectedRows > 0){
+                    return callback({
+                        code: response_code.SUCCESS,
+                        message: "Post saved successfully"
+                    });
+                }
+            }
+        }catch(error){
+            return callback({
+                code: response_code.OPERATION_FAILED,
+                message: "Some Error Occured",
+                data: error
+            });
+        }
+    }
+
+    async add_comment(request_data, user_id, callback) {
+        try{
+            const {post_id, comment_} = request_data;
+            if(!post_id || !comment_){
+                return callback({
+                    code: response_code.BAD_REQUEST,
+                    message: "Post ID and Comment are required"
+                });
+            }
+            const commentQuery = "INSERT INTO tbl_comment (user_id, post_id, comment_) VALUES (?, ?, ?)";
+            const [commentResult] = await database.query(commentQuery, [user_id, post_id, comment_]);
+            if(commentResult.affectedRows > 0){
+                return callback({
+                    code: response_code.SUCCESS,
+                    message: "Comment added successfully",
+                    data: {commentResult}
+                });
+            }
+        }catch(error){
+            return callback({
+                code: response_code.OPERATION_FAILED,
+                message: "Error",
+                data: error
+            });
+        }
+    }
+
+    async delete_posts(request_data, callback){
+        try{
+    
+            const {post_id, user_id} = request_data;
+            var checkQuery = "SELECT * FROM tbl_post WHERE post_id = ? AND user_id = ?";
+            const [post] = await database.query(checkQuery, [post_id, user_id]);
+    
+            if (post.length === 0) {
+                return callback({
+                    code: response_code.NOT_FOUND,
+                    message: "Post not found or you are not authorized to delete it."
+                });
+            }
+    
+            if (post[0].is_deleted === 1) {
+                return callback({
+                    code: response_code.SUCCESS,
+                    message: "Post is already deleted."
+                });
+            }
+    
+            
+            const deletePostQuery = "UPDATE tbl_post SET is_deleted = 1, is_active = 0 WHERE post_id = ? AND user_id = ?";
+            await database.query(deletePostQuery, [post_id, user_id]);
+    
+            const deleteImagesQuery = `
+                UPDATE tbl_image 
+                SET is_deleted = 1, is_active = 0 
+                WHERE image_id IN (
+                    SELECT image_id FROM tbl_post_image_relation WHERE post_id = ?
+                )
+            `;
+            await database.query(deleteImagesQuery, [post_id]);
+    
+            return callback({
+                code: response_code.SUCCESS,
+                message: "Post and related images deleted successfully."
+            });
+    
+        } catch(error){
+            return callback({
+                code: response_code.OPERATION_FAILED,
+                message: "Error Occured",
+                data: error
+            })
+        }
+    }
+
+    async edit_profile(request_data, user_id, callback) {
+        try {
+            if (!user_id) {
+                return callback({
+                    code: response_code.BAD_REQUEST,
+                    message: "User ID is required"
+                });
+            }
+    
+            const allowedFields = ["user_name", "user_full_name", "date_of_birth", "descriptions", "profile_pic"];
+            let updateFields = [];
+            let values = [];
+    
+            for (let key of allowedFields) {
+                if (request_data[key] !== undefined) {
+                    updateFields.push(`${key} = ?`);
+                    values.push(request_data[key]);
+                }
+            }
+    
+            if (updateFields.length === 0) {
+                return callback({
+                    code: response_code.NO_CHANGE,
+                    message: "No valid fields provided for update"
+                });
+            }
+
+            updateFields.push("updated_at = CURRENT_TIMESTAMP()");
+            values.push(user_id);
+    
+            const updateQuery = `
+                UPDATE tbl_user 
+                SET ${updateFields.join(", ")}
+                WHERE user_id = ? AND is_active = 1 AND is_deleted = 0
+            `;
+    
+            const [result] = await database.query(updateQuery, values);
+    
+            if (result.affectedRows > 0) {
+                return callback({
+                    code: response_code.SUCCESS,
+                    message: "Profile updated successfully"
+                });
+            } else {
+                return callback({
+                    code: response_code.NOT_FOUND,
+                    message: "User not found or no changes applied"
+                });
+            }
+    
+        } catch (error) {
+            console.log(error);
+            return callback({
+                code: response_code.OPERATION_FAILED,
+                message: "Error updating profile"
+            });
+        }
+    }
 
 }
 module.exports = new UserModel();
