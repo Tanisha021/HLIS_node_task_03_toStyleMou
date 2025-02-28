@@ -170,7 +170,7 @@ class UserModel {
 
     };
 
-    async updateUserProfile(request_data, callback) {
+    async compeleteUserProfile(request_data, callback) {
         if (!request_data || !request_data.user_id) {
             return callback({
                 code: response_code.OPERATION_FAILED,
@@ -227,9 +227,9 @@ class UserModel {
             if (request_data.email_id) {
                 field = 'email_id';
                 email = request_data.email_id;
-            } else if (request_data.phone_number) {
-                field = 'phone_number';
-                email = request_data.phone_number;
+            } else if (request_data.mobile_number) {
+                field = 'mobile_number';
+                email = request_data.mobile_number;
             } else {
                 return callback({
                     code: response_code.OPERATION_FAILED,
@@ -237,7 +237,7 @@ class UserModel {
                 });
             }
 
-            const selectQuery = `SELECT user_id, email_id, phone_number FROM tbl_user WHERE ${field} = ?`;
+            const selectQuery = `SELECT user_id, email_id, mobile_number FROM tbl_user WHERE ${field} = ?`;
             // console.log("Executing Query:", selectQuery);
             // Execute the query
             const [result] = await database.query(selectQuery, [email]);
@@ -807,36 +807,102 @@ class UserModel {
     }
     }
     //see ranking of posts
-    async postRankings(request_data, callback) {
-        
-        try{
-            const selectQuery =`select avg_rating,
-                                    rank() over (order by avg_rating desc) as rank_no ,
-                                    image_id
-                                    from tbl_subpost where post_id = ?;`
-            const [result] = await database.query(selectQuery, [request_data.post_id]);
-            if(result.length > 0){
-                return callback({
-                    code: response_code.SUCCESS,
-                    message: "Here is your ranking",
-                    data: result
-                });
-                                
-        }else {
+    async postRankings(request_data,user_id, callback) {
+    try{
+        const {post_id} = request_data;
+
+        if(!post_id){
             return callback({
-                code: response_code.NO_DATA_FOUND,  
-                message: `no ranking available  `,
-                data: []
+                code: response_code.OPERATION_FAILED,
+                message: "Post ID is required"
             });
         }
+        
+        const postOwnQuery = `SELECT p.user_id, p.expire_timer FROM tbl_post p 
+                                inner join tbl_user u on u.user_id = p.user_id 
+                                WHERE p.post_id = ? `;
+        const [postDetails] = await database.query(postOwnQuery, [post_id]);
+        if(postDetails.length === 0){
+            return callback({
+                code: response_code.NO_DATA_FOUND,
+                message: "No post found"
+            });
+        }
+        const {user_id:owner_id, expire_timer} = postDetails[0];
+        const isExpired = new Date(expire_timer) < new Date();
+        if(user_id && owner_id === user_id && isExpired){
+           const rankQuery = ` SELECT 
+                    sp.image_id,
+                    sp.avg_rating,
+                    RANK() OVER (ORDER BY sp.avg_rating DESC) AS rank_no
+                FROM tbl_subpost sp
+                INNER JOIN tbl_post p ON p.post_id = sp.post_id
+                WHERE sp.post_id = ? AND NOW() > p.expire_timer
+            `;
+            const [resultRanks] = await database.query(rankQuery, [post_id]);
+            return callback({
+                code: response_code.SUCCESS,
+                message: "Rankings fetched successfully",
+                data: resultRanks
+            });
+        }else{
+                const normalPostQuery = `
+                SELECT 
+                        p.post_id,
+                        p.descriptions,
+                        p.expire_timer,
+                        p.share_cnt,
+                        p.avg_rating,
+                        p.post_type,
+                        GROUP_CONCAT(i.image_name) AS images
+                    FROM tbl_post p
+                    LEFT JOIN tbl_post_image_relation pi ON pi.post_id = p.post_id
+                    LEFT JOIN tbl_image i ON i.image_id = pi.image_id
+                    WHERE p.post_id = ?
+                    GROUP BY p.post_id
+            `;
 
-    }catch(error){
-        console.error("Database Error:", error);
+            const [normalPost] = await database.query(normalPostQuery, [post_id]);
+            return callback({
+                code: response_code.SUCCESS,
+                message: "Post details fetched successfully",
+                data: normalPost
+            });
+        }
+    }catch (error) {
         return callback({
             code: response_code.OPERATION_FAILED,
-            message: "Database error occurred: " + (error.sqlMessage || error.message)
+            message: error.sqlMessage || "Error fetching rankings"
         });
     }
+    //     try{
+    //         const selectQuery =`select avg_rating,
+    //                                 rank() over (order by avg_rating desc) as rank_no ,
+    //                                 image_id
+    //                                 from tbl_subpost where post_id = ?;`
+    //         const [result] = await database.query(selectQuery, [request_data.post_id]);
+    //         if(result.length > 0){
+    //             return callback({
+    //                 code: response_code.SUCCESS,
+    //                 message: "Here is your ranking",
+    //                 data: result
+    //             });
+                                
+    //     }else {
+    //         return callback({
+    //             code: response_code.NO_DATA_FOUND,  
+    //             message: `no ranking available  `,
+    //             data: []
+    //         });
+    //     }
+
+    // }catch(error){
+    //     console.error("Database Error:", error);
+    //     return callback({
+    //         code: response_code.OPERATION_FAILED,
+    //         message: "Database error occurred: " + (error.sqlMessage || error.message)
+    //     });
+    // }
     }
 
     //post details
@@ -1312,7 +1378,7 @@ class UserModel {
                 });
             }
     
-            const fetchPostTypeQuery = "SELECT post_type FROM tbl_post WHERE post_id = ?";
+            const fetchPostTypeQuery = "SELECT post_type, expire_timer FROM tbl_post WHERE post_id = ? AND expire_timer > NOW()";
             const [post] = await database.query(fetchPostTypeQuery, [post_id]);
     
             if (post.length === 0) {
@@ -1322,7 +1388,8 @@ class UserModel {
                 });
             }
     
-            const post_type = post[0].post_type;
+            // const post_type = post[0].post_type;
+            const { post_type, expire_timer } = post[0];
     
             if (post_type === "toStyleCompare") {
                 if (!sub_post_id) {
@@ -1380,171 +1447,3 @@ class UserModel {
     }
 }
 module.exports = new UserModel();
-// async signup(request_data, callback) {
-//     try {
-//         console.log(request_data);
-
-//         // Validate required fields
-//         if (!request_data.email_id || !request_data.device_type) {
-//             return callback({
-//                 code: response_code.OPERATION_FAILED,
-//                 message: "Missing required fields"
-//             });
-//         }
-
-//         // Initialize user data with required fields
-//         const user_data = {
-//             email_id: request_data.email_id,
-//             login_type: request_data.login_type || "S" // Default to 'S' if not provided
-//         };
-
-//         // Add optional fields if they exist
-//         const optionalFields = ['user_name', 'fname', 'lname', 'phone_number', 'social_id', 'latitude', 'longitude'];
-//         optionalFields.forEach(field => {
-//             if (request_data[field]) {
-//                 user_data[field] = request_data[field];
-//             }
-//         });
-
-//         if (request_data.passwords) {
-//             user_data.passwords = md5(request_data.passwords);
-//         }
-
-//         // Prepare device data
-//         const device_data = {
-//             device_type: request_data.device_type,
-//             device_token: request_data.device_token,
-//             os_version: request_data.os_version,
-//             app_version: request_data.app_version,
-//             time_zone: request_data.time_zone // Add time_zone to match INSERT query
-//         };
-
-//         // Determine query based on login type
-//         const selectUserQueryIfExists = user_data.login_type === "S"
-//             ? "SELECT * FROM tbl_user WHERE email_id = ? OR phone_number = ?"
-//             : "SELECT * FROM tbl_user WHERE email_id = ? OR social_id = ?";
-
-//         const params = user_data.login_type === "S"
-//             ? [user_data.email_id, user_data.phone_number || null]
-//             : [user_data.email_id, user_data.social_id];
-
-//         // Check if user exists
-//         const [existingUsers] = await database.query(selectUserQueryIfExists, params);
-
-//         if (existingUsers.length > 0) {
-//             // Handle existing user
-//             const user_data_ = existingUsers[0];
-
-//             if (existingUsers.length > 1) {
-//                 await database.query(
-//                     "UPDATE tbl_user SET is_deleted = 1 WHERE user_id = ?",
-//                     [existingUsers[1].user_id]
-//                 );
-//             }
-
-//             const otp_obj = request_data.otp ? { otp: request_data.otp } : {};
-            
-//             common.updateUserInfo(user_data_.user_id, otp_obj, (error, updateUser) => {
-//                 if (error) {
-//                     return callback({
-//                         code: response_code.OPERATION_FAILED,
-//                         message: error
-//                     });
-//                 }
-//                 return callback({
-//                     code: response_code.SUCCESS,
-//                     message: "User Signed up",
-//                     data: updateUser
-//                 });
-//             });
-//         } else {
-//             // Handle new user
-//             if (!user_data.social_id && user_data.login_type === "S") {
-//                 // Regular signup - proceed directly
-//             } else {
-//                 // Social signup - verify social account
-//                 const [socialResult] = await database.query(
-//                     "SELECT * FROM tbl_socials WHERE email = ? AND social_id = ?",
-//                     [user_data.email_id, user_data.social_id]
-//                 );
-
-//                 if (!socialResult.length) {
-//                     return callback({
-//                         code: response_code.OPERATION_FAILED,
-//                         message: "Social ID and email combination not found in tbl_socials"
-//                     });
-//                 }
-//             }
-
-//             // Insert new user
-//             const [insertResult] = await database.query("INSERT INTO tbl_user SET ?", user_data);
-//             const userId = insertResult.insertId;
-
-//             await this.enterOtp(userId);
-
-//             // Insert device info
-//             await database.query(
-//                 "INSERT INTO tbl_device_info (device_type, time_zone, device_token, os_version, app_version, user_id) VALUES (?, ?, ?, ?, ?, ?)",
-//                 [device_data.device_type, device_data.time_zone, device_data.device_token, device_data.os_version, device_data.app_version, userId]
-//             );
-
-//             // Get user details
-//             common.getUserDetail(userId, userId, async (err, userInfo) => {
-//                 try {
-//                     if (err) {
-//                         return callback({
-//                             code: response_code.OPERATION_FAILED,
-//                             message: err
-//                         });
-//                     }
-    
-//                     if (userInfo.is_profile_complete == 1) {
-//                         // Generate tokens
-//                         const userToken = common.generateToken(40);
-//                         const deviceToken = common.generateToken(40);
-    
-//                         // Update both tokens in database
-//                         await Promise.all([
-//                             database.query(
-//                                 "UPDATE tbl_user SET token = ? WHERE user_id = ?",
-//                                 [userToken, userId]
-//                             ),
-//                             database.query(
-//                                 "UPDATE tbl_device_info SET device_token = ? WHERE user_id = ?",
-//                                 [deviceToken, userId]
-//                             )
-//                         ]);
-    
-//                         // Update userInfo with new token before sending response
-//                         userInfo.token = userToken;
-//                         userInfo.device_token = deviceToken;
-    
-//                         return callback({
-//                             code: response_code.SUCCESS,
-//                             message: "User Signed Up Successfully... Verification Pending",
-//                             data: userInfo
-//                         });
-//                     } else {
-//                         return callback({
-//                             code: response_code.SUCCESS,
-//                             message: "User Signed Up Successfully... Verification and Profile Completion is Pending",
-//                             data: userInfo
-//                         });
-//                     }
-//                 } catch (tokenError) {
-//                     console.error("Token update error:", tokenError);
-//                     return callback({
-//                         code: response_code.OPERATION_FAILED,
-//                         message: "Error updating tokens"
-//                     });
-//                 }
-//             });
-//         }
-//     } catch (error) {
-//         console.error("Signup error:", error);
-//         return callback({
-//             code: response_code.OPERATION_FAILED,
-//             message: error.sqlMessage || error.message || "An error occurred during signup"
-//         });
-//     }
-// }

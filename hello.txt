@@ -1,0 +1,168 @@
+// async signup(request_data, callback) {
+//     try {
+//         console.log(request_data);
+
+//         // Validate required fields
+//         if (!request_data.email_id || !request_data.device_type) {
+//             return callback({
+//                 code: response_code.OPERATION_FAILED,
+//                 message: "Missing required fields"
+//             });
+//         }
+
+//         // Initialize user data with required fields
+//         const user_data = {
+//             email_id: request_data.email_id,
+//             login_type: request_data.login_type || "S" // Default to 'S' if not provided
+//         };
+
+//         // Add optional fields if they exist
+//         const optionalFields = ['user_name', 'fname', 'lname', 'phone_number', 'social_id', 'latitude', 'longitude'];
+//         optionalFields.forEach(field => {
+//             if (request_data[field]) {
+//                 user_data[field] = request_data[field];
+//             }
+//         });
+
+//         if (request_data.passwords) {
+//             user_data.passwords = md5(request_data.passwords);
+//         }
+
+//         // Prepare device data
+//         const device_data = {
+//             device_type: request_data.device_type,
+//             device_token: request_data.device_token,
+//             os_version: request_data.os_version,
+//             app_version: request_data.app_version,
+//             time_zone: request_data.time_zone // Add time_zone to match INSERT query
+//         };
+
+//         // Determine query based on login type
+//         const selectUserQueryIfExists = user_data.login_type === "S"
+//             ? "SELECT * FROM tbl_user WHERE email_id = ? OR phone_number = ?"
+//             : "SELECT * FROM tbl_user WHERE email_id = ? OR social_id = ?";
+
+//         const params = user_data.login_type === "S"
+//             ? [user_data.email_id, user_data.phone_number || null]
+//             : [user_data.email_id, user_data.social_id];
+
+//         // Check if user exists
+//         const [existingUsers] = await database.query(selectUserQueryIfExists, params);
+
+//         if (existingUsers.length > 0) {
+//             // Handle existing user
+//             const user_data_ = existingUsers[0];
+
+//             if (existingUsers.length > 1) {
+//                 await database.query(
+//                     "UPDATE tbl_user SET is_deleted = 1 WHERE user_id = ?",
+//                     [existingUsers[1].user_id]
+//                 );
+//             }
+
+//             const otp_obj = request_data.otp ? { otp: request_data.otp } : {};
+            
+//             common.updateUserInfo(user_data_.user_id, otp_obj, (error, updateUser) => {
+//                 if (error) {
+//                     return callback({
+//                         code: response_code.OPERATION_FAILED,
+//                         message: error
+//                     });
+//                 }
+//                 return callback({
+//                     code: response_code.SUCCESS,
+//                     message: "User Signed up",
+//                     data: updateUser
+//                 });
+//             });
+//         } else {
+//             // Handle new user
+//             if (!user_data.social_id && user_data.login_type === "S") {
+//                 // Regular signup - proceed directly
+//             } else {
+//                 // Social signup - verify social account
+//                 const [socialResult] = await database.query(
+//                     "SELECT * FROM tbl_socials WHERE email = ? AND social_id = ?",
+//                     [user_data.email_id, user_data.social_id]
+//                 );
+
+//                 if (!socialResult.length) {
+//                     return callback({
+//                         code: response_code.OPERATION_FAILED,
+//                         message: "Social ID and email combination not found in tbl_socials"
+//                     });
+//                 }
+//             }
+
+//             // Insert new user
+//             const [insertResult] = await database.query("INSERT INTO tbl_user SET ?", user_data);
+//             const userId = insertResult.insertId;
+
+//             await this.enterOtp(userId);
+
+//             // Insert device info
+//             await database.query(
+//                 "INSERT INTO tbl_device_info (device_type, time_zone, device_token, os_version, app_version, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+//                 [device_data.device_type, device_data.time_zone, device_data.device_token, device_data.os_version, device_data.app_version, userId]
+//             );
+
+//             // Get user details
+//             common.getUserDetail(userId, userId, async (err, userInfo) => {
+//                 try {
+//                     if (err) {
+//                         return callback({
+//                             code: response_code.OPERATION_FAILED,
+//                             message: err
+//                         });
+//                     }
+    
+//                     if (userInfo.is_profile_complete == 1) {
+//                         // Generate tokens
+//                         const userToken = common.generateToken(40);
+//                         const deviceToken = common.generateToken(40);
+    
+//                         // Update both tokens in database
+//                         await Promise.all([
+//                             database.query(
+//                                 "UPDATE tbl_user SET token = ? WHERE user_id = ?",
+//                                 [userToken, userId]
+//                             ),
+//                             database.query(
+//                                 "UPDATE tbl_device_info SET device_token = ? WHERE user_id = ?",
+//                                 [deviceToken, userId]
+//                             )
+//                         ]);
+    
+//                         // Update userInfo with new token before sending response
+//                         userInfo.token = userToken;
+//                         userInfo.device_token = deviceToken;
+    
+//                         return callback({
+//                             code: response_code.SUCCESS,
+//                             message: "User Signed Up Successfully... Verification Pending",
+//                             data: userInfo
+//                         });
+//                     } else {
+//                         return callback({
+//                             code: response_code.SUCCESS,
+//                             message: "User Signed Up Successfully... Verification and Profile Completion is Pending",
+//                             data: userInfo
+//                         });
+//                     }
+//                 } catch (tokenError) {
+//                     console.error("Token update error:", tokenError);
+//                     return callback({
+//                         code: response_code.OPERATION_FAILED,
+//                         message: "Error updating tokens"
+//                     });
+//                 }
+//             });
+//         }
+//     } catch (error) {
+//         console.error("Signup error:", error);
+//         return callback({
+//             code: response_code.OPERATION_FAILED,
+//             message: error.sqlMessage || error.message || "An error occurred during signup"
+//         });
+//     }
+// }

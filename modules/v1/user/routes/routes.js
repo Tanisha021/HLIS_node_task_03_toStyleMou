@@ -7,15 +7,15 @@ const customerRoute = (app) => {
     app.post("/v1/user/generate-otp", User.verifyOTP);
     app.post("/v1/user/verify-otp", User.validateOTP);
     app.get("/v1/user/check-verification", User.checkUserVerification);
-    app.post("/v1/user/update-profile", User.updateUserProfile);
+    app.post("/v1/user/complete-profile", User.compeleteUserProfile);
     app.post("/v1/user/forgot-password", User.forgotPassword);
-    app.post("/v1/user/reset-password", User.resetPassword);
+    app.post("/v1/user/reset-passwordd", User.resetPassword);
     app.post("/v1/user/change-password", User.changePassword);
 
     //figma api
     app.get("/v1/user/display-trending-post", User.displayTrendingPost);
     app.get("/v1/user/category/:category_name", User.CategoryWiseDisplay);
-    app.get("/v1/user/postranking/:post_id", User.postRankings);
+    // app.get("/v1/user/postranking/:post_id", User.postRankings);
     app.get("/v1/user/postDetails/:post_id", User.postDetails);
     app.get("/v1/user/savedpost", User.savedPost);
     app.get("/v1/user/:user_id", User.profileOfUser);
@@ -30,8 +30,8 @@ const customerRoute = (app) => {
     app.post("/v1/user/delete-posts", User.delete_posts);
     app.post("/v1/user/edit-profile", User.edit_profile);
     app.post("/v1/user/rate-post", User.rate_post);
+    app.post("/v1/user/postranking", User.postRankings);
 
-    
 };
 
 module.exports = customerRoute;
